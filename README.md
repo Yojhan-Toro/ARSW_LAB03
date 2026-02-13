@@ -71,9 +71,33 @@ edu.eci.arsw
 # Actividades del laboratorio
 
 ## Parte I — (Antes de terminar la clase) `wait/notify`: Productor/Consumidor
-1. Ejecuta el programa de productor/consumidor y monitorea CPU con **jVisualVM**. ¿Por qué el consumo alto? ¿Qué clase lo causa?  
-2. Ajusta la implementación para **usar CPU eficientemente** cuando el **productor es lento** y el **consumidor es rápido**. Valida de nuevo con VisualVM.  
+1. Ejecuta el programa de productor/consumidor y monitorea CPU con **jVisualVM**. ¿Por qué el consumo alto? ¿Qué clase lo causa?
+**Respuesta:** Al ejecutar el programa con BUSY-WAITING obtenemos:
+![Busy](img/busy.png)
+El consumo de CPU es alto porque la implementación usa BUSY-WAITING (espera activa). Cuando la cola está vacía, el consumidor no se bloquea, sino que ejecuta un bucle infinito verificando constantemente si hay elementos disponibles.
+
+La clase BusySpinQueue causa el problema, específicamente el método take():
+    public T take() {
+        while (true) {
+            T v = q.pollFirst();
+            if (v != null) return v;
+            Thread.onSpinWait(); // ← Sigue consumiendo CPU
+        }
+    }
+
+El bucle while(true) se ejecuta millones de veces por segundo, consumiendo mas CPU de lo normal, aunque es clave aclarar que podria ser mayot debido a que se usa Virtual Threads que son propios de las ultimas versiones de JAVA y los hace mas eficientes, sin embargo el problema del BUSY-WAITING sigue estando solo que no se ve en la CPU. No tiene una condicion de parar sino que va a seguir indefinidamente consumiendo mas.
+
+2. Ajusta la implementación para **usar CPU eficientemente** cuando el **productor es lento** y el **consumidor es rápido**. Valida de nuevo con VisualVM.
+**Respuesta:** En el segundo escenario:
+![Monitor](img/monitor.png)
+Se cambió de BusySpinQueue (busy-wait) a BoundedBuffer (wait/notify).
+
+La clase BoundedBuffer usa el patrón de monitores, que cuando la cola está vacía, el consumidor ejecuta this.wait() esto BLOQUEA el hilo y lo saca del scheduler de CPU. El productor ejecuta this.notifyAll() al agregar elementos, esto DESPIERTA al consumidor solo cuando hay trabajo.
+
 3. Ahora **productor rápido** y **consumidor lento** con **límite de stock** (cola acotada): garantiza que el límite se respete **sin espera activa** y valida CPU con un stock pequeño.
+**Respuesta:** Al acotar la cota obtenemos un resultado favorable:
+![Con limite 2](img/0.2.png)
+El límite se respeta perfectamente. Aunque el productor es 50× más rápido (1ms vs 50ms), se sincroniza automáticamente con el consumidor mediante `wait()/notifyAll()`, esperando eficientemente sin consumir CPU cuando la cola alcanza su capacidad máxima.
 
 > Nota: la Parte I se realiza en el repositorio dedicado https://github.com/DECSIS-ECI/Lab_busy_wait_vs_wait_notify — clona ese repo y realiza los ejercicios allí; contiene el código de productor/consumidor, variantes con busy-wait y las soluciones usando wait()/notify(), además de instrucciones para ejecutar y validar con jVisualVM.
 
@@ -88,6 +112,8 @@ Reescribe el **buscador de listas negras** para que la búsqueda **se detenga ta
 - Garantizar **ausencia de condiciones de carrera** sobre el contador compartido.
 
 > Puedes usar `AtomicInteger` o sincronización mínima sobre la región crítica del contador.
+
+**Respuesta:** Programa adjunto. Revisar archivo BlackListThreadOptimized.
 
 ---
 
