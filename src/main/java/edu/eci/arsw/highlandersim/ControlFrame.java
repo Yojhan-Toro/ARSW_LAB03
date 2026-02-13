@@ -11,7 +11,7 @@ import java.util.List;
 public final class ControlFrame extends JFrame {
 
   private ImmortalManager manager;
-  private final JTextArea output = new JTextArea(14, 40);
+  private final JTextArea output = new JTextArea(16, 50);
   private final JButton startBtn = new JButton("Start");
   private final JButton pauseAndCheckBtn = new JButton("Pause & Check");
   private final JButton resumeBtn = new JButton("Resume");
@@ -23,7 +23,7 @@ public final class ControlFrame extends JFrame {
   private final JComboBox<String> fightMode = new JComboBox<>(new String[]{"ordered", "naive"});
 
   public ControlFrame(int count, String fight) {
-    setTitle("Highlander Simulator — ARSW");
+    setTitle("Highlander Simulator – ARSW");
     setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
     setLayout(new BorderLayout(8,8));
 
@@ -70,32 +70,55 @@ public final class ControlFrame extends JFrame {
     manager = new ImmortalManager(n, fight, health, damage);
     manager.start();
     output.setText("Simulation started with %d immortals (health=%d, damage=%d, fight=%s)%n"
-      .formatted(n, health, damage, fight));
+            .formatted(n, health, damage, fight));
   }
 
   private void onPauseAndCheck(ActionEvent e) {
-    if (manager == null) return;
-    manager.pause();
-    List<Immortal> pop = manager.populationSnapshot();
-    long sum = 0;
-    StringBuilder sb = new StringBuilder();
-    for (Immortal im : pop) {
-      int h = im.getHealth();
-      sum += h;
-      sb.append(String.format("%-14s : %5d%n", im.name(), h));
+    if (manager == null) {
+      output.setText("No simulation running. Press START first.\n");
+      return;
     }
-    sb.append("--------------------------------\n");
-    sb.append("Total Health: ").append(sum).append('\n');
-    sb.append("Score (fights): ").append(manager.scoreBoard().totalFights()).append('\n');
+
+    manager.pause();
+
+    List<ImmortalManager.ImmortalSnapshot> snapshots = manager.getAtomicSnapshot();
+
+    long totalHealth = 0;
+    int aliveCount = 0;
+
+    StringBuilder sb = new StringBuilder();
+    sb.append("\n───────────────────────────────────────────────\n");
+
+    for (ImmortalManager.ImmortalSnapshot snapshot : snapshots) {
+      int h = snapshot.health();
+      totalHealth += h;
+      if (snapshot.alive()) aliveCount++;
+
+      String status = snapshot.alive() ? "ALIVE" : "DEAD ";
+      sb.append(String.format("%-14s : %5d  [%s]%n", snapshot.name(), h, status));
+    }
+
+    sb.append("\n───────────────────────────────────────────────\n");
+    sb.append(String.format("Total Health:        %d%n", totalHealth));
+    sb.append(String.format("Alive Count:         %d / %d%n", aliveCount, snapshots.size()));
+    sb.append(String.format("Total Fights:        %d%n", manager.scoreBoard().totalFights()));
+    sb.append("───────────────────────────────────────────────\n");
+
+
+
     output.setText(sb.toString());
   }
 
   private void onResume(ActionEvent e) {
-    if (manager == null) return;
+    if (manager == null) {
+      return;
+    }
     manager.resume();
   }
 
-  private void onStop(ActionEvent e) { safeStop(); }
+  private void onStop(ActionEvent e) {
+    safeStop();
+  }
 
   private void safeStop() {
     if (manager != null) {

@@ -118,11 +118,26 @@ Reescribe el **buscador de listas negras** para que la búsqueda **se detenga ta
 ---
 
 ## Parte III — (Avance) Sincronización y *Deadlocks* con *Highlander Simulator*
-1. Revisa la simulación: N inmortales; cada uno **ataca** a otro. El que ataca **resta M** al contrincante y **suma M/2** a su propia vida.  
+1. Revisa la simulación: N inmortales; cada uno **ataca** a otro. El que ataca **resta M** al contrincante y **suma M/2** a su propia vida. 
+
+    Revisé que la pelea haga exactamente lo que pide el enunciado: el atacante le resta M al otro y se suma M/2 a sí mismo, siempre verificando que ambos estén vivos antes de modificar la salud. Centralicé esa lógica en un solo método para no duplicar código y evitar inconsistencias. Con eso me aseguré de que cada pelea siga la regla exacta del modelo y que el contador de peleas también se actualice correctamente
+
 2. **Invariante**: con N y salud inicial `H`, la suma total debería permanecer constante (salvo durante un update). Calcula ese valor y úsalo para validar.  
-3. Ejecuta la UI y prueba **“Pause & Check”**. ¿Se cumple el invariante? Explica.  
-4. **Pausa correcta**: asegura que **todos** los hilos queden pausados **antes** de leer/imprimir la salud; implementa **Resume** (ya disponible).  
+
+    Al principio asumí que la suma total era constante, pero realmente no lo es: en cada pelea el sistema pierde M/2 neto porque uno pierde M y el otro gana M/2. Entonces el valor esperado es: N × H = (peleas × M/2 + vida total)
+
+3. Ejecuta la UI y prueba **“Pause & Check”**. ¿Se cumple el invariante? Explica.
+
+    Antes no se cumplía, porque se pausaba pero no se garantizaba que todos los hilos estuvieran realmente detenidos al momento de leer la salud, entonces la suma salía mal. Después implementé un snapshot atómico adquiriendo los locks en orden consistente antes de leer, y ahora sí: al hacer “Pause & Check” el invariante siempre da diferencia 0. O sea, el problema no era la fórmula sino la lectura concurrente
+
+4. **Pausa correcta**: asegura que **todos** los hilos queden pausados **antes** de leer/imprimir la salud; implementa **Resume** (ya disponible).
+
+    La pausa funciona poniendo una bandera y haciendo que cada hilo pase por awaitIfPaused(), donde se bloquea hasta que se haga resume. Además, doy un pequeño margen para que todos alcancen el punto de espera antes de hacer el snapshot. El Resume simplemente hace signalAll() y todos los hilos continúan. Así me aseguro de que al pausar, realmente no haya peleas ejecutándose mientras se imprime la salud
+
 5. Haz *click* repetido y valida consistencia. ¿Se mantiene el invariante?  
+
+    Probé hacer muchos clicks seguidos en “Pause & Check” intercalando con Resume, y el invariante siempre se mantiene. Eso confirma que no hay lecturas inconsistentes ni efectos raros acumulados. Si hubiera una race condition, tarde o temprano la diferencia no sería 0, pero con el snapshot atómico y la pausa correcta se mantiene estable
+
 6. **Regiones críticas**: identifica y sincroniza las secciones de pelea para evitar carreras; si usas múltiples *locks*, anida con **orden consistente**:
    ```java
    synchronized (lockA) {
@@ -131,11 +146,88 @@ Reescribe el **buscador de listas negras** para que la búsqueda **se detenga ta
      }
    }
    ```
+    La región crítica real es cuando se modifican las dos vidas en una pelea. Para evitar carreras y deadlock, usé un orden total por nombre o id, siempre se adquieren los locks en el mismo orden. Así, aunque dos inmortales se ataquen entre sí al mismo tiempo, nunca se forma un ciclo de espera. Con el enfoque naive sí podía haber deadlock, pero con orden consistente no
+
 7. Si la app se **detiene** (posible *deadlock*), usa **`jps`** y **`jstack`** para diagnosticar.  
-8. Aplica una **estrategia** para corregir el *deadlock* (p. ej., **orden total** por nombre/id, o **`tryLock(timeout)`** con reintentos y *backoff*).  
+
+    Probé usando la versión native la que bloquea primero this y luego other sin orden global, pero aun así no pude replicar el deadlock en mis ejecuciones. Sin embargo, teóricamente sí es totalmente posible, porque si dos hilos intentan atacarse mutuamente al mismo tiempo, uno puede tomar el lock de A y esperar el de B, mientras el otro toma el de B y espera el de A, formando un ciclo de espera circular. En ese caso, con jps se obtiene el PID y con jstack se podría ver en el thread dump ambos hilos en estado BLOCKED esperando el monitor que tiene el otro, confirmando el deadlock aunque en mis pruebas no se haya manifestado
+
+8. Aplica una **estrategia** para corregir el *deadlock* (p. ej., **orden total** por nombre/id, o **`tryLock(timeout)`** con reintentos y *backoff*). 
+
+    La estrategia que dejé fue orden total por nombre/id porque es simple y matemáticamente elimina el deadlock. Alternativamente se puede usar tryLock con timeout y reintentos con backoff, pero eso complica más el código y puede generar starvation. Con orden total todos los hilos siguen la misma regla, así que no hay ciclos posibles
+
 9. Valida con **N=100, 1000 o 10000** inmortales. Si falla el invariante, revisa la pausa y las regiones críticas.  
-10. **Remover inmortales muertos** sin bloquear la simulación: analiza si crea una **condición de carrera** con muchos hilos y corrige **sin sincronización global** (colección concurrente o enfoque *lock-free*).  
+
+- Validar con N = 100
+
+    ![](images/0.png)
+    Como se pude ver en la imagen el invariante N × H = (peleas × M/2 + vida total)
+    se cumple: 
+    
+    (100 * 100) = (2021 * 10/5 + -105)
+
+    (10000) = (10105 + -105)
+
+    (10000 = 10000)
+
+    La ejecucion fue tan rapida que nu pude verificar la pausa.
+
+- Validar con N = 1000
+
+    Primero hacemos una pausa para verificar que el invariante se cumple al pausar
+    ![](images/1.png)
+    Como se pude ver en la imagen el invariante N × H = (peleas × M/2 + vida total)
+    se cumple:
+
+    (1000 * 100) = (20222 * 10/2 + -1110)
+
+    (100000) = (101110 + -1110)
+
+    (100000 = 100000)
+
+    Al seguir vemos
+    ![](images/2.png)
+    Y se cumple el invariante:
+
+    (1000 * 100) = (20284 * 10/2 + -1420)
+
+    (100000) = (101420 + -1420)
+
+    (100000 = 100000)
+
+
+- Validar con N = 5000 (No se podia poner 10000)
+
+    Primero hacemos una pausa para verificar que el invariante se cumple al pausar
+    ![](images/3.png)
+    Como se pude ver en la imagen el invariante N × H = (peleas × M/2 + vida total)
+    se cumple:
+
+    (5000 * 100) = (97657 * 10/2 + 11715)
+
+    (500000) = (488285 + 11715)
+
+    (500000 = 500000)
+
+    Al seguir vemos
+    ![](images/4.png)
+    Y se cumple el invariante:
+
+    (5000 * 100) = (101499 * 10/2 + -7495)
+
+    (500000) = (507495 + -7495)
+
+    (500000 = 500000)
+
+
+10. **Remover inmortales muertos** sin bloquear la simulación: analiza si crea una **condición de carrera** con muchos hilos y corrige **sin sincronización global** (colección concurrente o enfoque *lock-free*).
+
+    Cambiar a una colección concurrente como CopyOnWriteArrayList permitió eliminar muertos sin sincronización global y sin lanzar ConcurrentModificationException. Los iteradores trabajan sobre una copia, así que no se rompe nada aunque otro hilo elimine elementos. Como hay muchas más lecturas que escrituras, este enfoque funciona bien y evita meter un lock global que frenaría toda la simulación
+
 11. Implementa completamente **STOP** (apagado ordenado).
+
+    Implementé un stop en fases: primero se marca running = false en cada inmortal, luego se hace resume por si alguno estaba pausado, después se hace shutdown() del executor y se espera su terminación. Si no termina a tiempo, se fuerza con shutdownNow(). Así me aseguro de que no queden hilos zombie y que el cierre sea limpio y controlado, incluso si la simulación estaba en pausa cuando se presionó STOP
+
 
 ---
 
